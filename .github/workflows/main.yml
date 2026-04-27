@@ -19,35 +19,66 @@ jobs:
   leech-split-file: 
     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5 # آپدیت شده به v5
-        with:
-          fetch-depth: 1 
+steps:
+  - name: Checkout code
+    uses: actions/checkout@v5
+    with:
+      fetch-depth: 1
 
-      - name: Install 7z
-        run: sudo apt-get update && sudo apt-get install -y p7zip-full
+  - name: Install 7z
+    run: sudo apt-get update && sudo apt-get install -y p7zip-full
 
-      - name: Download file
-        run: |
-          curl -L --fail --retry 3 -o downloaded_file "${{ github.event.inputs.file_url }}"
-          echo "File downloaded. Size: $(ls -lh downloaded_file | awk '{print $5}')"
+  - name: Download file
+    run: |
+      curl -L --fail --retry 3 -o downloaded_file "${{ github.event.inputs.file_url }}"
+      echo "File downloaded. Size: $(ls -lh downloaded_file | awk '{print $5}')"
 
-      - name: Extract original filename
-        id: get_filename
-        run: |
-          ORIGINAL_NAME=$(basename "${{ github.event.inputs.file_url }}" | cut -d '?' -f1)
-          [ -z "$ORIGINAL_NAME" ] && ORIGINAL_NAME="downloaded_file_archive" # نام پیش‌فرض اگر قابل استخراج نبود
-          echo "Original filename will be used for archive: $ORIGINAL_NAME"
-          echo "::set-output name=original_name::$ORIGINAL_NAME" # برای استفاده در مراحل بعدی
+  - name: Extract original filename and prepare for archive
+    id: get_filename
+    run: |
+      # نام فایل دانلود شده توسط curl
+      DOWNLOADED_FILE="downloaded_file"
 
-      - name: Create password-protected multi-part archive (85MB chunks)
-        run: |
-          7z a -p"${{ github.event.inputs.zip_password }}" -mhe=on -mx=3 -v85m "sci-hub.ir_${{ steps.get_filename.outputs.original_name }}.7z" downloaded_file
-          echo "Archive created successfully."
+      ORIGINAL_URL="${{ github.event.inputs.file_url }}"
 
-      - name: Remove original downloaded file
-        run: rm -f downloaded_file
+      # استخراج نام فایل از URL
+      FILENAME_FROM_URL=$(basename "$ORIGINAL_URL")
+
+      # اگر نام فایل از URL خالی بود، از نام پیش‌فرض استفاده می‌کنیم
+      if [[ -z "$FILENAME_FROM_URL" || "$FILENAME_FROM_URL" == "/" ]]; then
+        FILENAME_FROM_URL="$DOWNLOADED_FILE"
+      fi
+
+      # کوتاه کردن نام
+      MAX_LEN=50
+      FILENAME_BASE=$(echo "$FILENAME_FROM_URL" | sed 's/\.[^.]*$//')
+      SHORT_FILENAME_BASE=$(echo "$FILENAME_BASE" | cut -c 1-$MAX_LEN)
+
+      if [[ "$FILENAME_FROM_URL" == "$FILENAME_BASE" ]]; then
+        FINAL_FILENAME="${SHORT_FILENAME_BASE}.file"
+      else
+        FILENAME_EXT="${FILENAME_FROM_URL##*.}"
+        FINAL_FILENAME="${SHORT_FILENAME_BASE}.${FILENAME_EXT}"
+      fi
+
+      # اضافه کردن نام سایت به ابتدای نام فایل نهایی
+      ARCHIVE_PREFIX="sci-hub.ir_"
+      FULL_ARCHIVE_NAME="${ARCHIVE_PREFIX}${FINAL_FILENAME}"
+
+      echo "Archive base name will be: ${FULL_ARCHIVE_NAME}"
+      echo "::set-output name=archive_base_name::${FULL_ARCHIVE_NAME}"
+      echo "::set-output name=downloaded_file_name::${DOWNLOADED_FILE}"
+
+  - name: Create password-protected multi-part archive (85MB chunks)
+    run: |
+      ARCHIVE_NAME="${{ steps.get_filename.outputs.archive_base_name }}.7z"
+      echo "Creating archive: ${ARCHIVE_NAME}"
+      7z a -p"${{ github.event.inputs.zip_password }}" -mhe=on -mx=3 -v85m "${ARCHIVE_NAME}" "${{ steps.get_filename.outputs.downloaded_file_name }}"
+
+  - name: Remove original downloaded file
+    if: steps.get_filename.outputs.downloaded_file_name != ''
+    run: rm "${{ steps.get_filename.outputs.downloaded_file_name }}"
+
 
       # کانفیگ Git برای استفاده از اکانت گیت‌هاب اکشن
       - name: Configure Git
